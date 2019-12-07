@@ -1,12 +1,10 @@
 use crate::resolver::DnsResolver;
 use tokio::task;
-use std::net::{SocketAddr, Ipv4Addr, Ipv6Addr};
-use crate::resolver::echo::EchoResolver;
-
-pub fn start(bind_address: SocketAddr) -> tokio::task::JoinHandle<()> {
+use std::net::{SocketAddr};
 
 
-    let join_handle: task::JoinHandle<()> = task::spawn(async move {
+pub async fn start<T : DnsResolver + 'static >(bind_address: SocketAddr, resolver: async_std::sync::Arc<T>) -> () {
+
 
         let socket = tokio::net::UdpSocket::bind(bind_address).await;
         let socket = socket.unwrap();
@@ -15,18 +13,17 @@ pub fn start(bind_address: SocketAddr) -> tokio::task::JoinHandle<()> {
 
         let (reply_queue, reply_tasks) = tokio::sync::mpsc::channel::<(SocketAddr, Box<Vec<u8>>)>(100);
 
-        let listen_request_task = task::spawn(async move {
+        let listen_request_task = task::spawn_local(async move {
             let mut queue = reply_tasks;
             loop {
                 let (client, payload) = queue.recv().await.unwrap();
-                println!("{}", &client);
                 _sender.send_to(&payload, &client).await.unwrap();
             }
         });
 
-        let resolver = async_std::sync::Arc::new(EchoResolver{});
+        let resolver = async_std::sync::Arc::clone(&resolver);
 
-        let request_dispatch_task = task::spawn(async move {
+        let request_dispatch_task = task::spawn_local(async move {
             let mut receiver = _receiver;
             loop {
                 let mut local_reply_queue = reply_queue.clone();
@@ -39,8 +36,7 @@ pub fn start(bind_address: SocketAddr) -> tokio::task::JoinHandle<()> {
 
                         receiver.recv_from(buffer).await.unwrap()
                     };
-                    let port = client.port();
-                    task::spawn(async move {
+                    task::spawn_local(async move {
                         let buffer = buffer;
                         let query: &[u8] = &buffer[0usize..length];
                         let reply = local_resolver_copy.resolve(query).await;
@@ -53,8 +49,5 @@ pub fn start(bind_address: SocketAddr) -> tokio::task::JoinHandle<()> {
 
         listen_request_task.await.unwrap();
         request_dispatch_task.await.unwrap();
-    });
-
-    join_handle
 }
 
