@@ -8,9 +8,11 @@ edition = "2018"
 
 [dependencies]
 async-trait = "0.1.21"
+bytes = "0.5.3"
 futures = "0.3.1"
 futures-timer = "2.0.2"
-tokio = { version = "0.2", features = ["macros", "rt-core", "rt-util", "sync", "udp"]}
+h2 = "0.2.1"
+tokio = { version = "0.2.6", features = ["macros", "rt-core", "rt-util", "sync", "udp", "tcp"]}
 
 [dependencies.async-std]
 version = "1.0.0"

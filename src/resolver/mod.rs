@@ -1,4 +1,5 @@
 pub mod echo;
+pub mod hyper;
 use async_trait::async_trait;
 
 #[async_trait]
