@@ -1,7 +1,8 @@
 use crate::resolver::DnsResolver;
+use arr_macro::arr;
+use bytes::{BytesMut, Bytes, BufMut};
 use tokio::task;
 use std::net::{SocketAddr};
-
 
 pub async fn start<T : DnsResolver + 'static >(bind_address: SocketAddr, resolver: async_std::sync::Arc<T>) -> () {
 
@@ -11,7 +12,7 @@ pub async fn start<T : DnsResolver + 'static >(bind_address: SocketAddr, resolve
 
         let (mut _receiver, mut _sender) = socket.split();
 
-        let (reply_queue, reply_tasks) = tokio::sync::mpsc::channel::<(SocketAddr, Box<Vec<u8>>)>(100);
+        let (reply_queue, reply_tasks) = tokio::sync::mpsc::channel::<(SocketAddr, Bytes)>(100);
 
         let listen_request_task = task::spawn_local(async move {
             let mut queue = reply_tasks;
@@ -28,18 +29,18 @@ pub async fn start<T : DnsResolver + 'static >(bind_address: SocketAddr, resolve
             loop {
                 let mut local_reply_queue = reply_queue.clone();
                 let local_resolver_copy = async_std::sync::Arc::clone(&resolver);
-                let mut buffer = Box::new(vec![0]);
+                let mut buffer = BytesMut::with_capacity(1500);
                 {
-                    let (length, client) = {
-                        let buffer = buffer.as_mut();
-                        buffer.resize(1500, 0);
+                    let mut read_buffer = arr![0u8; 1500];
+                    let (length, client) = receiver.recv_from(&mut read_buffer).await.unwrap();
 
-                        receiver.recv_from(buffer).await.unwrap()
-                    };
+                    buffer.put(&read_buffer[0..length]);
+
+                    let query = buffer.freeze();
+
                     task::spawn_local(async move {
-                        let buffer = buffer;
-                        let query: &[u8] = &buffer[0usize..length];
-                        let reply = local_resolver_copy.resolve(query).await;
+                        let reply = local_resolver_copy.resolve(query).await.unwrap();
+
                         local_reply_queue.send((client, reply)).await.unwrap();
                     });
 

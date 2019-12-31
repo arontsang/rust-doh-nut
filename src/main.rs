@@ -1,6 +1,5 @@
 
 use std::net::*;
-use crate::resolver::echo::EchoResolver;
 use crate::resolver::hyper::HyperResolver;
 use std::error::Error;
 use tokio::runtime::Runtime;
