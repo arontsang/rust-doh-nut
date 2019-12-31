@@ -38,7 +38,7 @@ impl DnsResolver for HyperResolver {
                 .header("content-length", query.len().to_string())
                 .body(Body::from(query));
 
-        let response = request.send().await.unwrap();
+        let response = request.send().await?;
         let body = response.bytes().await?;
 
         Result::Ok(body)
