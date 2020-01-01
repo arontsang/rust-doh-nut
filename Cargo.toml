@@ -19,3 +19,7 @@ tokio = { version = "0.2.6", features = ["macros", "rt-core", "rt-util", "sync",
 version = "1.0.0"
 default-features = false
 features = ["std"]
+
+[profile.release]
+lto = true
+panic = 'abort'

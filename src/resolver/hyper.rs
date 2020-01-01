@@ -17,6 +17,7 @@ impl HyperResolver {
     pub async fn new() -> Result<HyperResolver, Box<dyn Error>> {
 
         let client = reqwest::Client::builder()
+            .tcp_nodelay()
             .build()?;
 
         Result::Ok(HyperResolver { client })
