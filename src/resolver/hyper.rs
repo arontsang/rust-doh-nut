@@ -17,7 +17,6 @@ impl HyperResolver {
     pub async fn new() -> Result<HyperResolver, Box<dyn Error>> {
 
         let client = reqwest::Client::builder()
-            //.http2_prior_knowledge()
             .build()?;
 
         Result::Ok(HyperResolver { client })
@@ -33,10 +32,10 @@ impl DnsResolver for HyperResolver {
         let client = &self.client;
 
         let request = client.request(Method::POST, "https://1.1.1.1/dns-query")
-                .header("accept", "application/dns-message")
-                .header("content-type", "application/dns-message")
-                .header("content-length", query.len().to_string())
-                .body(Body::from(query));
+            .header("accept", "application/dns-message")
+            .header("content-type", "application/dns-message")
+            .header("content-length", query.len().to_string())
+            .body(Body::from(query));
 
         let response = request.send().await?;
         let body = response.bytes().await?;

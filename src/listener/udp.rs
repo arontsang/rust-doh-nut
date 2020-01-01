@@ -9,17 +9,26 @@ pub async fn start<T : DnsResolver + 'static >(bind_address: SocketAddr, resolve
 
 
     let socket = tokio::net::UdpSocket::bind(bind_address).await;
-    let socket = socket.unwrap();
+    let socket = socket?;
 
-    let (mut receiver, mut _sender) = socket.split();
+    let (mut receiver, mut sender) = socket.split();
 
     let (reply_queue, reply_tasks) = tokio::sync::mpsc::channel::<(SocketAddr, Bytes)>(100);
 
     let listen_request_task = task::spawn_local(async move {
         let mut queue = reply_tasks;
         loop {
-            let (client, payload) = queue.recv().await.unwrap();
-            _sender.send_to(&payload, &client).await.unwrap();
+            let success = match queue.recv().await {
+                Some((client, payload)) =>
+                    Some(sender.send_to(&payload, &client).await),
+                None => None,
+            };
+            match success {
+                Some(Ok(_)) => {},
+                Some(Err(error)) =>
+                    println!("Error sending reply: {}", error),
+                None => {},
+            }
         }
     });
 
@@ -39,11 +48,14 @@ pub async fn start<T : DnsResolver + 'static >(bind_address: SocketAddr, resolve
 
                         task::spawn_local(async move {
 
-                            let reply = local_resolver_copy.resolve(query).await.unwrap();
-                            local_reply_queue.send((client, reply)).await.unwrap();
-
-
-
+                            match local_resolver_copy.resolve(query).await{
+                                Err(error) => println!("Error resolving packet: {}", error),
+                                Ok(reply) =>
+                                    match local_reply_queue.send((client, reply)).await{
+                                        Err(error) => println!("Error replying packet: {}", error),
+                                        Ok(_) => {},
+                                    }
+                            };
                         });
                     },
                     Err(error) =>
