@@ -19,7 +19,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         let resolver = HyperResolver::new().await;
         let resolver: HyperResolver = resolver.unwrap();
         let resolver = async_std::sync::Arc::new(resolver);
-        crate::listener::udp::start(binding_socket, resolver).await;
+        let success = crate::listener::udp::start(binding_socket, resolver).await;
+
+        match success {
+            Ok(()) => {},
+            Err(e) =>{
+                eprintln!("Application error: {}", e);
+            }
+        }
 
 
     });
