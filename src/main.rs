@@ -1,4 +1,3 @@
-
 use std::net::*;
 use crate::resolver::hyper::HyperResolver;
 use std::error::Error;
