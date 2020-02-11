@@ -18,6 +18,7 @@ impl HyperResolver {
 
         let client = reqwest::Client::builder()
             .tcp_nodelay()
+            .max_idle_per_host(16)
             .build()?;
 
         Result::Ok(HyperResolver { client })
@@ -32,7 +33,7 @@ impl DnsResolver for HyperResolver {
 
         let client = &self.client;
 
-        let request = client.request(Method::POST, "https://1.1.1.1/dns-query")
+        let request = client.request(Method::POST, "https://cloudflare-dns.com/dns-query")
             .header("accept", "application/dns-message")
             .header("content-type", "application/dns-message")
             .header("content-length", query.len().to_string())

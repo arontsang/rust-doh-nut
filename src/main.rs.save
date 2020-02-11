@@ -7,7 +7,7 @@ mod listener;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut rt = tokio::runtime::Builder::new()
-        .threaded_scheduler()
+        .basic_scheduler()
         .enable_time()
         .enable_io()
         .build()?;
