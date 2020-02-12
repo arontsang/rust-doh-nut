@@ -11,6 +11,7 @@ arr_macro = "0.1"
 async-trait = "0.1"
 bytes = "0.5"
 reqwest = { version = "0.10", features = ["native-tls-vendored"] }
+rustop = "1.0"
 tokio = { version = "0.2", features = ["rt-core", "rt-util", "io-driver", "tcp", "udp", "time"]}
 
 

@@ -8,20 +8,21 @@ use std::error::Error;
 
 
 pub struct HyperResolver {
-    client : Client
+    client : Client,
+    server : String
 }
 
 
 impl HyperResolver {
 
-    pub async fn new() -> Result<HyperResolver, Box<dyn Error>> {
+    pub async fn new(server: String) -> Result<HyperResolver, Box<dyn Error>> {
 
         let client = reqwest::Client::builder()
             .tcp_nodelay()
             .max_idle_per_host(16)
             .build()?;
 
-        Result::Ok(HyperResolver { client })
+        Result::Ok(HyperResolver { client, server })
     }
 
 }
@@ -33,7 +34,7 @@ impl DnsResolver for HyperResolver {
 
         let client = &self.client;
 
-        let request = client.request(Method::POST, "https://cloudflare-dns.com/dns-query")
+        let request = client.request(Method::POST, &self.server)
             .header("accept", "application/dns-message")
             .header("content-type", "application/dns-message")
             .header("content-length", query.len().to_string())
