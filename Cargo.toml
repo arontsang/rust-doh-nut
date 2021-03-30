@@ -9,9 +9,12 @@ edition = "2018"
 [dependencies]
 arr_macro = "0.1"
 async-compat = "0.2"
+async-executor = "1.4"
+async-task = "4.0"
 async-trait = "0.1"
 bytes = { package = "bytes", version = "1.0" }
 ctrlc = "3.1"
+futures-lite = "1.11"
 reqwest = { version = "0.11", features = ["native-tls-vendored"] }
 rustop = "^1"
 smol = "1.2"
