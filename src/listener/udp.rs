@@ -5,14 +5,15 @@ use tokio::task;
 use tokio::net::UdpSocket;
 use std::net::{SocketAddr};
 use std::error::Error;
+use std::sync::Arc;
 pub async fn start<T : DnsResolver + 'static >(bind_address: SocketAddr, resolver: std::rc::Rc<T>) -> Result<(), Box<dyn Error>> {
-    let socket = UdpSocket::bind(bind_address).await?;
-    let (mut receiver, sender) = socket.split();
+    let socket = Arc::new(UdpSocket::bind(bind_address).await?);
+    let (receiver, sender) = (socket.clone(), socket);
     let (reply_queue, reply_tasks) = tokio::sync::mpsc::channel::<(SocketAddr, Bytes)>(100);
 
     let listen_request_task = task::spawn_local(async move {
         let mut queue = reply_tasks;
-        let mut sender = sender;
+        let sender = sender;
         loop {
             let success = match queue.recv().await {
                 Some((client, payload)) =>
@@ -28,7 +29,7 @@ pub async fn start<T : DnsResolver + 'static >(bind_address: SocketAddr, resolve
         }
     });
 
-    let (mut received_packet_enqueue, mut dequeue_received_packet) = tokio::sync::mpsc::channel::<(SocketAddr, Bytes)>(100);
+    let (received_packet_enqueue, mut dequeue_received_packet) = tokio::sync::mpsc::channel::<(SocketAddr, Bytes)>(100);
 
     let receiving_task = task::spawn(async move {
         loop {
@@ -54,7 +55,7 @@ pub async fn start<T : DnsResolver + 'static >(bind_address: SocketAddr, resolve
 
         while let Some((client, query)) = dequeue_received_packet.recv().await{
             let local_resolver_copy = resolver.clone();
-            let mut local_reply_queue = reply_queue.clone();
+            let local_reply_queue = reply_queue.clone();
             task::spawn_local(async move {
                 match local_resolver_copy.resolve(query).await{
                     Err(error) => println!("Error resolving packet: {}", error),

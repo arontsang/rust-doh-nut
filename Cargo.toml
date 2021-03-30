@@ -8,11 +8,14 @@ edition = "2018"
 
 [dependencies]
 arr_macro = "0.1"
+async-compat = "0.2"
 async-trait = "0.1"
-bytes = "0.5"
-reqwest = { version = "0.10", features = ["native-tls-vendored"] }
-rustop = "1.0"
-tokio = { version = "0.2", features = ["rt-core", "rt-util", "io-driver", "tcp", "udp", "time"]}
+bytes = { package = "bytes", version = "1.0" }
+ctrlc = "3.1"
+reqwest = { version = "0.11", features = ["native-tls-vendored"] }
+rustop = "^1"
+smol = "1.2"
+tokio = { version = "1.4", features = ["rt", "net", "sync", "time"]}
 
 
 
