@@ -3,7 +3,6 @@ use async_executor::LocalExecutor;
 use async_task::Task;
 use arr_macro::arr;
 use bytes::{BytesMut, Bytes, BufMut};
-use futures_lite::future;
 use tokio::net::UdpSocket;
 use std::net::{SocketAddr};
 use std::error::Error;
@@ -74,7 +73,8 @@ impl<T : DnsResolver + 'static> UdpServer<T> {
 
         let request_dispatch_task = executor.spawn(async move {
             let continuation_executor = LocalExecutor::new();
-            let receiver_task = async {
+            let receiver_executor = LocalExecutor::new();
+            let _receiver_task = receiver_executor.spawn(async {
                 while let Some((client, query)) = dequeue_received_packet.recv().await{
                     let local_resolver_copy = resolver.clone();
                     let local_reply_queue = reply_queue.clone();
@@ -90,9 +90,14 @@ impl<T : DnsResolver + 'static> UdpServer<T> {
                     })
                     .detach();
                 }
-            };
+            });
             
-            future::or(continuation_executor.tick(), receiver_task).await
+            loop {
+                let continuation_poll = continuation_executor.tick();
+                let receiver_task_poll = receiver_executor.tick();
+
+                futures_lite::future::or(continuation_poll, receiver_task_poll).await;
+            }
         });
 
 

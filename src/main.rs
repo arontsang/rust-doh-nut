@@ -27,9 +27,13 @@ fn main() -> smol::io::Result<()> {
         let resolver = resolver.expect("broken");
         let resolver = std::rc::Rc::new(resolver);
 
-        let _ = crate::listener::udp::UdpServer::new(&local_ex, binding_socket, resolver).await;
+        let _dns_server = crate::listener::udp::UdpServer::new(&local_ex, binding_socket, resolver).await;
        
-        kill().await?;
+        local_ex.run(async {
+            kill().await
+        }).await?;
+
+        
 
         Ok(())
     }))
