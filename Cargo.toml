@@ -15,7 +15,7 @@ async-trait = "0.1"
 bytes = { package = "bytes", version = "1.0" }
 ctrlc = "3.1"
 futures-lite = "1.11"
-reqwest = { version = "0.11", features = ["native-tls-vendored"] }
+reqwest = { version = "0.11", features = ["native-tls"] }
 rustop = "^1"
 smol = "1.2"
 tokio = { version = "1.4", features = ["rt", "net", "sync", "time"]}
