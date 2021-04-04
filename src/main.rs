@@ -22,24 +22,15 @@ fn main() -> smol::io::Result<()> {
 
     smol::block_on(Compat::new(async {
         let local_ex = LocalExecutor::new();
-
-
-        let _dns_server = build_dns_server(&local_ex, server, port).await;
-       
-        local_ex.run(async {
-            kill().await
-        }).await?;
-
-        
-
-        Ok(())
+        let _dns_server = build_dns_server(&local_ex, server, port).await;       
+        local_ex.run(kill()).await
     }))
 }
 
 async fn build_dns_server(local_executor: &LocalExecutor<'_>, resolver_address: String, binding_port: u16) -> Result<UdpServer<HyperResolver>, Box<dyn Error>> {
     let binding_socket = SocketAddr::from(([0, 0, 0, 0], binding_port));
     let resolver = HyperResolver::new(resolver_address).await;
-    let resolver = resolver.expect("broken");
+    let resolver = resolver.expect("Failed to get resolver.");
     let resolver = std::rc::Rc::new(resolver);
 
     crate::listener::udp::UdpServer::new(&local_executor, binding_socket, resolver).await
@@ -52,8 +43,7 @@ async fn kill() -> smol::io::Result<()>  {
         s.try_send(()).expect("broken");
     }).expect("broken");
 
-    match w.recv().await {
-        Ok(()) => Ok(()),
+    match w.recv().await {        
         _ =>     Ok(())
     } 
 }
