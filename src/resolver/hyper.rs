@@ -24,8 +24,8 @@ lazy_static! {
 
 impl HyperResolver {
 
-    pub async fn new(server: &String) -> Result<HyperResolver, Box<dyn Error>> {
-        Result::Ok(HyperResolver { server: server.clone() })
+    pub fn new(server: &String) -> HyperResolver {
+        HyperResolver { server: server.clone() }
     }
 }
 
