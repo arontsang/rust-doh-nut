@@ -18,8 +18,8 @@ impl HyperResolver {
     pub async fn new(server: String) -> Result<HyperResolver, Box<dyn Error>> {
 
         let client = reqwest::Client::builder()
-            .tcp_nodelay()
-            .max_idle_per_host(16)
+            .tcp_nodelay(true)
+            .pool_max_idle_per_host(16)
             .build()?;
 
         Result::Ok(HyperResolver { client, server })

@@ -12,8 +12,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         opt port:Option<u16>, desc:"Port to host DNS proxy Defaults to: 15353";
         opt server:Option<String>, desc:"DOH Server defaults to: https://1.1.1.1/dns-query" ;
     }.parse_or_exit();
-    let mut rt = tokio::runtime::Builder::new()
-        .basic_scheduler()
+    let mut rt = tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .enable_io()
         .build()?;
