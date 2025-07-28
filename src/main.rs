@@ -27,38 +27,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
     
     
-    let udp = local.spawn_local({
+    let udp = {
         let resolver = resolver.clone();
         async move {
             let binding_socket = SocketAddr::from(([0, 0, 0, 0], port));
-            let success = listener::udp::start(binding_socket, resolver).await;
-            match success {
-                Ok(()) => {},
-                Err(e) => {
-                    eprintln!("Application error: {}", e);
-                }
-            }
+            listener::udp::start(binding_socket, resolver).await
         }
-    });
+    };
     
-    let tcp = local.spawn_local({
+    let tcp = {
         let resolver = resolver.clone();
         async move {
             let resolver = resolver.clone();
             let binding_socket = SocketAddr::from(([0, 0, 0, 0], port));
-            let success = listener::tcp::start(binding_socket, resolver).await;
-            match success {
-                Ok(()) => {},
-                Err(e) => {
-                    eprintln!("Application error: {}", e);
-                }
-            }
+           listener::tcp::start(binding_socket, resolver).await
         }
-    });
+    };
     
-    local.block_on(&mut rt, async {
-        let _ = tcp.await;
-        let _ = udp.await;
+    _ = local.block_on(&mut rt, async {
+        tokio::join!(udp, tcp)
     });
     
     
