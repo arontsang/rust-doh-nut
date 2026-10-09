@@ -12,7 +12,10 @@ async-trait = "0.1"
 bytes = "^1.0"
 reqwest = { version = "0.12.22", features = ["native-tls-vendored"] }
 rustop = "1.0"
-tokio = { version = "^1.47", features = ["rt", "io-util", "net", "macros"]}
+tokio = { version = "^1.47", features = ["rt", "io-util", "net", "macros", "time"]}
+
+[dev-dependencies]
+tokio = { version = "^1.47", features = ["test-util"] }
 
 
 

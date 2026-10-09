@@ -16,6 +16,16 @@ This is a DNS stub resolver that uses a DOH server to recursively resolve DNS qu
 
    You can also switch to https://dns.google/dns-query
 
+## Deadlines
+
+Upstream DoH connections have a 3-second connection timeout. Each DoH request
+has a 5-second total timeout, including reading the response body, for both UDP
+and TCP queries.
+
+TCP clients have 5 seconds to send a complete query (length prefix and body),
+and responses have a separate 5-second write deadline. TCP errors and timeouts
+close only the affected connection. Failed UDP lookups are logged and dropped.
+
 ## Performance
 
 I've been able to get the overhead down to about 3ms on requests over plan DNS.
