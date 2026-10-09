@@ -1,4 +1,4 @@
-use crate::resolver::DnsResolver;
+use crate::resolver::{dns, DnsResolver};
 use bytes::Bytes;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::convert::TryFrom;
@@ -91,7 +91,13 @@ where
                             let lookup_slots = lookup_slots.clone();
                             pending.push(async move {
                                 let lookup_slot = timeout(IO_TIMEOUT, lookup_slots.acquire_owned()).await??;
-                                let response = resolver.resolve(query).await?;
+                                let response = match resolver.resolve(query.clone()).await {
+                                    Ok(response) => response,
+                                    Err(error) => {
+                                        eprintln!("Error resolving TCP query: {}", error);
+                                        dns::servfail_response(&query)?
+                                    }
+                                };
                                 Ok::<_, Box<dyn Error>>((response, slot, lookup_slot))
                             });
                         }
@@ -119,6 +125,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resolver::dns;
     use crate::resolver::echo::EchoResolver;
 
     #[tokio::test]
@@ -218,15 +225,16 @@ mod tests {
     async fn resolver_failure_releases_global_capacity() {
         let slots = Arc::new(Semaphore::new(1));
         let (mut socket, mut client) = tokio::io::duplex(64);
-        client.write_all(&[0, 2, 0, 1]).await.unwrap();
+        let query = dns_query();
+        client.write_u16(query.len() as u16).await.unwrap();
+        client.write_all(&query).await.unwrap();
         client.shutdown().await.unwrap();
-        assert!(super::handle_connection(
-            &mut socket,
-            &StubResolver { response: None },
-            slots.clone()
-        )
-        .await
-        .is_err());
+        super::handle_connection(&mut socket, &StubResolver { response: None }, slots.clone())
+            .await
+            .unwrap();
+        let response = read_dns_frame(&mut client).await;
+        dns::validate_response(&query, &response).unwrap();
+        assert_eq!(u16::from_be_bytes([response[2], response[3]]) & 0xf, 2);
         assert_eq!(slots.available_permits(), 1);
     }
 
@@ -411,19 +419,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolver_failure_returns_error_without_response() {
+    async fn resolver_failure_returns_servfail_and_keeps_connection_open() {
         let (mut socket, mut client) = tokio::io::duplex(64);
-        client.write_u16(3).await.unwrap();
-        client.write_all(b"dns").await.unwrap();
-        let error = handle_connection(&mut socket, &StubResolver { response: None })
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error.downcast_ref::<std::io::Error>().unwrap().kind(),
-            std::io::ErrorKind::ConnectionRefused,
+        let query = dns_query();
+        let (result, _) = tokio::join!(
+            handle_connection(&mut socket, &StubResolver { response: None }),
+            async {
+                for _ in 0..2 {
+                    client.write_u16(query.len() as u16).await.unwrap();
+                    client.write_all(&query).await.unwrap();
+                }
+                client.shutdown().await.unwrap();
+                for _ in 0..2 {
+                    let response = read_dns_frame(&mut client).await;
+                    dns::validate_response(&query, &response).unwrap();
+                    assert_eq!(u16::from_be_bytes([response[2], response[3]]) & 0xf, 2);
+                }
+            }
         );
-        drop(socket);
-        assert_eq!(client.read(&mut [0; 1]).await.unwrap(), 0);
+        result.unwrap();
+    }
+
+    fn dns_query() -> Vec<u8> {
+        b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03www\x07example\x03com\x00\x00\x01\x00\x01".to_vec()
+    }
+
+    async fn read_dns_frame<S: AsyncRead + Unpin>(socket: &mut S) -> Vec<u8> {
+        let length = usize::from(socket.read_u16().await.unwrap());
+        let mut response = vec![0; length];
+        socket.read_exact(&mut response).await.unwrap();
+        response
     }
 
     #[tokio::test]

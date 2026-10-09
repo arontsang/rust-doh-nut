@@ -1,4 +1,4 @@
-use crate::resolver::DnsResolver;
+use crate::resolver::{dns, DnsResolver};
 use arr_macro::arr;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::error::Error;
@@ -64,13 +64,24 @@ pub async fn start<T: DnsResolver + 'static>(
             let local_reply_queue = reply_queue.clone();
             task::spawn_local(async move {
                 let _slot = slot;
-                match local_resolver_copy.resolve(query).await {
-                    Err(error) => println!("Error resolving packet: {}", error),
-                    Ok(reply) => match local_reply_queue.send((client, reply)).await {
-                        Err(error) => println!("Error replying packet: {}", error),
-                        Ok(_) => {}
-                    },
+                let reply = match local_resolver_copy.resolve(query.clone()).await {
+                    Ok(reply) => Some(reply),
+                    Err(error) => {
+                        eprintln!("Error resolving packet: {}", error);
+                        match dns::servfail_response(&query) {
+                            Ok(reply) => Some(reply),
+                            Err(error) => {
+                                eprintln!("Cannot build DNS failure response: {}", error);
+                                None
+                            }
+                        }
+                    }
                 };
+                if let Some(reply) = reply {
+                    if let Err(error) = local_reply_queue.send((client, reply)).await {
+                        eprintln!("Error replying packet: {}", error);
+                    }
+                }
             });
         }
         Ok::<_, Box<dyn Error>>(())
@@ -86,7 +97,57 @@ pub async fn start<T: DnsResolver + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resolver::dns;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct FailingResolver;
+
+    #[async_trait::async_trait]
+    impl DnsResolver for FailingResolver {
+        async fn resolve(&self, _: Bytes) -> Result<Bytes, Box<dyn Error>> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "upstream unavailable",
+            )
+            .into())
+        }
+    }
+
+    #[tokio::test]
+    async fn resolver_failure_returns_servfail() {
+        let reservation = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+        let local = task::LocalSet::new();
+        local
+            .run_until(async {
+                let server = task::spawn_local(start(
+                    address,
+                    std::rc::Rc::new(FailingResolver),
+                    Arc::new(Semaphore::new(1)),
+                ));
+                tokio::task::yield_now().await;
+
+                let query = Bytes::from_static(
+                    b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03www\x07example\x03com\x00\x00\x01\x00\x01",
+                );
+                let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+                client.send_to(&query, address).await.unwrap();
+                let mut response = [0; 512];
+                let (length, _) = tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    client.recv_from(&mut response),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                let response = &response[..length];
+                dns::validate_response(&query, response).unwrap();
+                assert_eq!(u16::from_be_bytes([response[2], response[3]]) & 0xf, 2);
+                server.abort();
+            })
+            .await;
+    }
 
     struct GatedResolver {
         started: AtomicUsize,
