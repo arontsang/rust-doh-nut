@@ -36,6 +36,18 @@ occurs. A client that closes its write side can still read outstanding replies.
 The query-read deadline applies to each frame, including idle time between
 queries, and starts when a slot is available in the pipeline.
 
+## Concurrency Limits
+
+UDP and TCP share a global limit of 128 admitted queries. A query holds its slot
+through resolution and response delivery (UDP reply enqueue or TCP frame write).
+UDP dispatch waits for capacity before spawning work; its bounded receive queue
+and the socket buffer absorb bursts, with excess datagrams eventually dropped.
+TCP queries wait up to 5 seconds for global capacity before closing the connection.
+
+At most 128 TCP connections are handled at once; excess connections are closed
+without spawning a handler. Each accepted connection retains its separate
+16-query pipeline limit. Limits are currently fixed rather than CLI options.
+
 ## Performance
 
 I've been able to get the overhead down to about 3ms on requests over plan DNS.

@@ -1,6 +1,8 @@
 use std::net::*;
 use std::error::Error;
 use std::rc::Rc;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 use crate::resolver::hyper::HyperResolver;
 use tokio::task;
 mod resolver;
@@ -25,13 +27,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         let resolver = HyperResolver::new(server).await;
         resolver.map(|x| Rc::new(x))
     })?;
+    let lookup_slots = Arc::new(Semaphore::new(128));
     
     
     let udp = {
         let resolver = resolver.clone();
+        let lookup_slots = lookup_slots.clone();
         async move {
             let binding_socket = SocketAddr::from(([0, 0, 0, 0], port));
-            listener::udp::start(binding_socket, resolver).await
+            listener::udp::start(binding_socket, resolver, lookup_slots).await
         }
     };
     
@@ -40,7 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         async move {
             let resolver = resolver.clone();
             let binding_socket = SocketAddr::from(([0, 0, 0, 0], port));
-           listener::tcp::start(binding_socket, resolver).await
+           listener::tcp::start(binding_socket, resolver, lookup_slots).await
         }
     };
     

@@ -14,18 +14,29 @@ use tokio::time::timeout;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_IN_FLIGHT: usize = 16;
+const MAX_CONNECTIONS: usize = 128;
 
 pub async fn start<T: DnsResolver + 'static>(
     bind_address: SocketAddr,
     resolver: std::rc::Rc<T>,
+    lookup_slots: Arc<Semaphore>,
 ) -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(bind_address).await?;
+    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
         let (mut socket, _) = listener.accept().await?;
+        let connection = match connections.clone().try_acquire_owned() {
+            Ok(connection) => connection,
+            Err(_) => continue,
+        };
         task::spawn_local({
             let resolver = resolver.clone();
+            let lookup_slots = lookup_slots.clone();
             async move {
-                if let Err(error) = handle_connection(&mut socket, resolver.as_ref()).await {
+                let _connection = connection;
+                if let Err(error) =
+                    handle_connection(&mut socket, resolver.as_ref(), lookup_slots).await
+                {
                     eprintln!("Error handling TCP query: {}", error);
                 }
             }
@@ -33,7 +44,11 @@ pub async fn start<T: DnsResolver + 'static>(
     }
 }
 
-async fn handle_connection<S, T>(socket: &mut S, resolver: &T) -> Result<(), Box<dyn Error>>
+async fn handle_connection<S, T>(
+    socket: &mut S,
+    resolver: &T,
+    lookup_slots: Arc<Semaphore>,
+) -> Result<(), Box<dyn Error>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     T: DnsResolver,
@@ -72,16 +87,20 @@ where
             tokio::select! {
                 query = incoming.recv(), if input_open => {
                     match query {
-                        Some((query, slot)) => pending.push(async move {
-                            let response = resolver.resolve(query).await?;
-                            Ok::<_, Box<dyn Error>>((response, slot))
-                        }),
+                        Some((query, slot)) => {
+                            let lookup_slots = lookup_slots.clone();
+                            pending.push(async move {
+                                let lookup_slot = timeout(IO_TIMEOUT, lookup_slots.acquire_owned()).await??;
+                                let response = resolver.resolve(query).await?;
+                                Ok::<_, Box<dyn Error>>((response, slot, lookup_slot))
+                            });
+                        }
                         None => input_open = false,
                     }
                 }
                 Some(result) = pending.next(), if !pending.is_empty() => {
                     // Hold the slot until the complete response frame is written.
-                    let (response, _slot) = result?;
+                    let (response, _slot, _lookup_slot) = result?;
                     let length = u16::try_from(response.len())?;
                     timeout(IO_TIMEOUT, async {
                         writer.write_u16(length).await?;
@@ -101,6 +120,115 @@ where
 mod tests {
     use super::*;
     use crate::resolver::echo::EchoResolver;
+
+    #[tokio::test]
+    async fn excess_connections_are_closed_and_capacity_is_reused() {
+        let reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = reservation.local_addr().unwrap();
+        drop(reservation);
+        let local = task::LocalSet::new();
+        local
+            .run_until(async {
+                let server = task::spawn_local(start(
+                    address,
+                    std::rc::Rc::new(EchoResolver {}),
+                    Arc::new(Semaphore::new(128)),
+                ));
+                tokio::task::yield_now().await;
+                let mut clients = Vec::new();
+                for _ in 0..MAX_CONNECTIONS {
+                    clients.push(tokio::net::TcpStream::connect(address).await.unwrap());
+                    tokio::task::yield_now().await;
+                }
+                let mut excess = tokio::net::TcpStream::connect(address).await.unwrap();
+                assert_eq!(
+                    timeout(Duration::from_secs(1), excess.read(&mut [0; 1]))
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                    0,
+                );
+                drop(clients.pop());
+                tokio::task::yield_now().await;
+                let mut replacement = tokio::net::TcpStream::connect(address).await.unwrap();
+                replacement.write_all(&[0, 2, 0, 1]).await.unwrap();
+                assert_eq!(
+                    timeout(Duration::from_secs(1), replacement.read_u16())
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                    2
+                );
+                assert_eq!(replacement.read_u16().await.unwrap(), 1);
+                server.abort();
+            })
+            .await;
+    }
+
+    async fn handle_connection<S, T>(socket: &mut S, resolver: &T) -> Result<(), Box<dyn Error>>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+        T: DnsResolver,
+    {
+        super::handle_connection(socket, resolver, Arc::new(Semaphore::new(128))).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn global_capacity_wait_times_out() {
+        let (mut socket, mut client) = tokio::io::duplex(64);
+        client.write_all(&[0, 2, 0, 1]).await.unwrap();
+        client.shutdown().await.unwrap();
+        let slots = Arc::new(Semaphore::new(0));
+        let error = super::handle_connection(&mut socket, &EchoResolver {}, slots)
+            .await
+            .unwrap_err();
+        assert!(error.is::<tokio::time::error::Elapsed>());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connections_share_global_capacity_and_release_it() {
+        let slots = Arc::new(Semaphore::new(1));
+        let resolver = GatedResolver {
+            active: std::sync::atomic::AtomicUsize::new(0),
+            gate: Semaphore::new(0),
+        };
+        let (mut first, mut first_client) = tokio::io::duplex(64);
+        let (mut second, mut second_client) = tokio::io::duplex(64);
+        for client in [&mut first_client, &mut second_client] {
+            client.write_all(&[0, 2, 0, 1]).await.unwrap();
+            client.shutdown().await.unwrap();
+        }
+        let (first_result, second_result, _) = tokio::join!(
+            super::handle_connection(&mut first, &resolver, slots.clone()),
+            super::handle_connection(&mut second, &resolver, slots.clone()),
+            async {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                assert_eq!(resolver.active.load(std::sync::atomic::Ordering::SeqCst), 1);
+                assert_eq!(slots.available_permits(), 0);
+                resolver.gate.add_permits(2);
+            }
+        );
+        first_result.unwrap();
+        second_result.unwrap();
+        assert_eq!(resolver.active.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolver_failure_releases_global_capacity() {
+        let slots = Arc::new(Semaphore::new(1));
+        let (mut socket, mut client) = tokio::io::duplex(64);
+        client.write_all(&[0, 2, 0, 1]).await.unwrap();
+        client.shutdown().await.unwrap();
+        assert!(super::handle_connection(
+            &mut socket,
+            &StubResolver { response: None },
+            slots.clone()
+        )
+        .await
+        .is_err());
+        assert_eq!(slots.available_permits(), 1);
+    }
 
     struct StubResolver {
         response: Option<Bytes>,
