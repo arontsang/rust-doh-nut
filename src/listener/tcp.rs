@@ -57,6 +57,101 @@ mod tests {
     use super::*;
     use crate::resolver::echo::EchoResolver;
 
+    struct StubResolver {
+        response: Option<Bytes>,
+    }
+
+    #[async_trait::async_trait]
+    impl DnsResolver for StubResolver {
+        async fn resolve(&self, _: Bytes) -> Result<Bytes, Box<dyn Error>> {
+            match &self.response {
+                Some(response) => Ok(response.clone()),
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "upstream unavailable",
+                )
+                .into()),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn maximum_length_query_round_trips() {
+        let (mut socket, mut client) = tokio::io::duplex(1024);
+        let query = vec![42; usize::from(u16::MAX)];
+        let (result, _) = tokio::join!(handle_connection(&mut socket, &EchoResolver {}), async {
+            client.write_u16(u16::MAX).await.unwrap();
+            client.write_all(&query).await.unwrap();
+            assert_eq!(client.read_u16().await.unwrap(), u16::MAX);
+            let mut response = vec![0; query.len()];
+            client.read_exact(&mut response).await.unwrap();
+            assert_eq!(response, query);
+        });
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn incomplete_query_returns_eof() {
+        // Disconnect before the prefix, during it, or during the query body.
+        for partial_query in [&b""[..], &b"\x00"[..], &b"\x00\x03dn"[..]] {
+            let (mut socket, mut client) = tokio::io::duplex(64);
+            client.write_all(partial_query).await.unwrap();
+            drop(client);
+            let error = handle_connection(&mut socket, &EchoResolver {})
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::UnexpectedEof,
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn disconnect_before_response_returns_write_error() {
+        let (mut socket, mut client) = tokio::io::duplex(64);
+        client.write_u16(3).await.unwrap();
+        client.write_all(b"dns").await.unwrap();
+        drop(client);
+        let error = handle_connection(&mut socket, &EchoResolver {})
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::BrokenPipe,
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_failure_returns_error_without_response() {
+        let (mut socket, mut client) = tokio::io::duplex(64);
+        client.write_u16(3).await.unwrap();
+        client.write_all(b"dns").await.unwrap();
+        let error = handle_connection(&mut socket, &StubResolver { response: None })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::ConnectionRefused,
+        );
+        drop(socket);
+        assert_eq!(client.read(&mut [0; 1]).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn oversized_response_is_rejected_before_writing() {
+        let (mut socket, mut client) = tokio::io::duplex(64);
+        client.write_u16(3).await.unwrap();
+        client.write_all(b"dns").await.unwrap();
+        let resolver = StubResolver {
+            response: Some(Bytes::from(vec![0; usize::from(u16::MAX) + 1])),
+        };
+        let error = handle_connection(&mut socket, &resolver).await.unwrap_err();
+        assert!(error.is::<std::num::TryFromIntError>());
+        drop(socket);
+        assert_eq!(client.read(&mut [0; 1]).await.unwrap(), 0);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn idle_connection_times_out() {
         let (mut socket, client) = tokio::io::duplex(64);
