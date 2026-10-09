@@ -10,7 +10,7 @@ This is a DNS stub resolver that uses a DOH server to recursively resolve DNS qu
 
 ## Parameters
 
--p UDP Port to serve on. Defaults to port 15353.
+-p UDP and TCP port to serve on. Defaults to port 15353.
 
 -s DOH POST server address to resolve. Defaults to Cloudflare.
 
@@ -25,6 +25,16 @@ and TCP queries.
 TCP clients have 5 seconds to send a complete query (length prefix and body),
 and responses have a separate 5-second write deadline. TCP errors and timeouts
 close only the affected connection. Failed UDP lookups are logged and dropped.
+
+## TCP Connections
+
+TCP connections support multiple queries and pipelining, with up to 16 queries
+in flight per connection. Responses are written as complete length-prefixed
+frames in completion order, so clients must match answers by DNS transaction ID.
+The connection stays open until the client closes it or a deadline or error
+occurs. A client that closes its write side can still read outstanding replies.
+The query-read deadline applies to each frame, including idle time between
+queries, and starts when a slot is available in the pipeline.
 
 ## Performance
 
